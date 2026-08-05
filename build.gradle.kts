@@ -327,6 +327,14 @@ dependencies {
     // For device controls
     implementation(libs.reactive.streams)
     implementation(libs.rxjava)
+
+    // Shizuku: lets the clipboard listener run `logcat` as the shell user.
+    // Android gates system-wide log access for apps, so an app-spawned logcat
+    // returns nothing on some OEM builds (verified: One UI 8.5). Running it via
+    // Shizuku gets shell's unrestricted log access, which is what makes
+    // automatic clipboard capture work there.
+    implementation("dev.rikka.shizuku:api:12.0.0")
+    implementation("dev.rikka.shizuku:provider:12.0.0")
 }
 
 licenseReport {
