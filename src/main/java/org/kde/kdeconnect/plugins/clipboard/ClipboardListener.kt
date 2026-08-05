@@ -15,9 +15,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import org.kde.kdeconnect.helpers.ThreadHelper.execute
 import org.kde.kdeconnect_tp.BuildConfig
+import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
@@ -52,20 +54,89 @@ class ClipboardListener {
             cm = ContextCompat.getSystemService<ClipboardManager>(context, ClipboardManager::class.java)!!
             cm.addPrimaryClipChangedListener { this.onClipboardChanged() }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && ClipboardPlugin.canSyncAutomatically(context)) {
-            execute {
-                try {
-                    val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
-                    // Listen only ClipboardService errors after now
-                    val logcatFilter = if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) { "E ClipboardService" } else { "ClipboardService:E" }
-                    val process = Runtime.getRuntime().exec(arrayOf<String>("logcat", "-T", timeStamp, logcatFilter, "*:S"))
-                    val bufferedReader = BufferedReader(InputStreamReader(process.inputStream))
-                    bufferedReader.forEachLine { line ->
-                        if (line.contains(BuildConfig.APPLICATION_ID)) {
-                            context.startActivity(ClipboardFloatingActivity.getIntent(context, false))
-                        }
+
+        // Prioritize Shizuku
+        if (isShizukuAvailableAndAuthorized()) {
+            startShizukuLogcatListener()
+        } else if (Shizuku.pingBinder()) {
+            requestShizukuPermission()
+        } else if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED) {
+            // Fallback to legacy READ_LOGS implementation
+            startLogcatListener()
+        } else {
+            // Notify user that Shizuku or ADB permissions are missing
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(context, "Clipboard sync requires Shizuku or ADB permissions", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun isShizukuAvailableAndAuthorized(): Boolean {
+        return try {
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun requestShizukuPermission() {
+        val listener = object : Shizuku.OnRequestPermissionResultListener {
+            override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
+                if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                    startShizukuLogcatListener()
+                } else {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(context, "Shizuku permission denied", Toast.LENGTH_LONG).show()
                     }
-                } catch (_: Exception) { }
+                }
+                Shizuku.removeRequestPermissionResultListener(this)
+            }
+        }
+        Shizuku.addRequestPermissionResultListener(listener)
+        try {
+            Shizuku.requestPermission(0)
+        } catch (e: Exception) {
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(context, "Shizuku service unavailable", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun startShizukuLogcatListener() {
+        execute {
+            try {
+                val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+                val logcatFilter = if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) { "E ClipboardService" } else { "ClipboardService:E" }
+                val process = Shizuku.newProcess(arrayOf("logcat", "-T", timeStamp, logcatFilter, "*:S"), null, null)
+                val bufferedReader = BufferedReader(InputStreamReader(process.inputStream))
+                bufferedReader.forEachLine { line ->
+                    if (line.contains(BuildConfig.APPLICATION_ID)) {
+                        context.startActivity(ClipboardFloatingActivity.getIntent(context, false))
+                    }
+                }
+                process.destroy()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun startLogcatListener() {
+        execute {
+            try {
+                val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+                val logcatFilter = if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) { "E ClipboardService" } else { "ClipboardService:E" }
+                val process = Runtime.getRuntime().exec(arrayOf("logcat", "-T", timeStamp, logcatFilter, "*:S"))
+                val bufferedReader = BufferedReader(InputStreamReader(process.inputStream))
+                bufferedReader.forEachLine { line ->
+                    if (line.contains(BuildConfig.APPLICATION_ID)) {
+                        context.startActivity(ClipboardFloatingActivity.getIntent(context, false))
+                    }
+                }
+                process.destroy()
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }
