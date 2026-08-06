@@ -18,6 +18,11 @@ on:
       tag:
         description: 'Upstream tag to build (blank = latest)'
         required: false
+      dry_run:
+        description: 'Build and verify, but do not push or publish'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write                  # push the rebased branch, create releases
@@ -54,15 +59,18 @@ jobs:
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
           echo "Base: $BASE   Target: $TARGET"
 
-          if [ "$BASE" = "$TARGET" ]; then
+          if [ "$BASE" = "$TARGET" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
             echo "already=true" >> "$GITHUB_OUTPUT"
             echo "Already on the newest upstream tag; nothing to do."
           else
             echo "already=false" >> "$GITHUB_OUTPUT"
+            # A dry run exercises build + verification even when there is no new
+            # tag. Untested release automation is its own silent-failure risk.
+            [ "${{ inputs.dry_run }}" = "true" ] && echo "Dry run: building without publishing."
           fi
 
       - name: Rebase the patch onto the new tag
-        if: steps.tags.outputs.already == 'false'
+        if: steps.tags.outputs.already == 'false' && steps.tags.outputs.base != steps.tags.outputs.target
         id: rebase
         run: |
           git config user.name  "github-actions[bot]"
@@ -159,11 +167,11 @@ jobs:
           echo "APK identity verified."
 
       - name: Push the rebased branch
-        if: steps.tags.outputs.already == 'false'
+        if: steps.tags.outputs.already == 'false' && inputs.dry_run != true
         run: git push --force-with-lease origin shizuku-clipboard
 
       - name: Publish release
-        if: steps.tags.outputs.already == 'false'
+        if: steps.tags.outputs.already == 'false' && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -173,7 +181,7 @@ jobs:
             --notes "Automatic clipboard sync via Shizuku, rebased onto upstream \
           [${{ steps.tags.outputs.target }}](https://github.com/KDE/kdeconnect-android/releases/tag/${{ steps.tags.outputs.target }}).
 
-          See [SHIZUKU-CLIPBOARD.md](../blob/shizuku-clipboard/SHIZUKU-CLIPBOARD.md) for what this changes and why, and for credit.
+          See [the README](https://github.com/isonmynetwork/kdeconnect-android) for what this changes and why, and for credit.
 
           Requires [Shizuku](https://shizuku.rikka.app/) with permission granted. Installs as \`org.kde.kdeconnect_tp.shizuku\`, alongside official KDE Connect."
 
