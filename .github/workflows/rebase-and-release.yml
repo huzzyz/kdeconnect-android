@@ -59,7 +59,13 @@ jobs:
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
           echo "Base: $BASE   Target: $TARGET"
 
-          if [ "$BASE" = "$TARGET" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+          # Proceed when: there is a newer tag, OR a tag was named explicitly
+          # (deliberate rebuild/first release), OR this is a dry run. Without the
+          # explicit-tag case there is no way to publish the FIRST release, since
+          # base and target match until upstream moves.
+          if [ "$BASE" = "$TARGET" ] \
+             && [ "${{ inputs.dry_run }}" != "true" ] \
+             && [ -z "${{ inputs.tag }}" ]; then
             echo "already=true" >> "$GITHUB_OUTPUT"
             echo "Already on the newest upstream tag; nothing to do."
           else
