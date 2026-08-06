@@ -1,0 +1,198 @@
+name: Rebase onto upstream and release
+
+# Keeps this fork current with upstream KDE Connect.
+#
+# Runs on GitHub-hosted runners: this repo is public, so the minutes are free
+# and no self-hosted runner is needed.
+#
+# The patch is deliberately tiny (see SHIZUKU-CLIPBOARD.md), so the rebase is
+# normally uneventful. When it is not, this fails loudly and opens an issue
+# rather than publishing a stale or half-applied build.
+
+on:
+  # daily poll for new upstream tags; off-the-hour to avoid the cron stampede
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream tag to build (blank = latest)'
+        required: false
+
+permissions:
+  contents: write                  # push the rebased branch, create releases
+  issues: write                    # report a failed rebase
+
+jobs:
+  rebase-build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork (full history — rebase needs it)
+        uses: actions/checkout@v4
+        with:
+          ref: shizuku-clipboard
+          fetch-depth: 0
+
+      - name: Add upstream and fetch tags
+        run: |
+          git remote add upstream https://github.com/KDE/kdeconnect-android.git
+          git fetch --quiet upstream --tags
+
+      - name: Work out base and target tags
+        id: tags
+        run: |
+          BASE=$(cat .upstream-base)
+          if [ -n "${{ inputs.tag }}" ]; then
+            TARGET="${{ inputs.tag }}"
+          else
+            # Newest vX.Y.Z tag by version order, not by date: upstream
+            # occasionally tags older branches, and date order would pick those.
+            TARGET=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
+          fi
+          echo "base=$BASE"     >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "Base: $BASE   Target: $TARGET"
+
+          if [ "$BASE" = "$TARGET" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "Already on the newest upstream tag; nothing to do."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebase the patch onto the new tag
+        if: steps.tags.outputs.already == 'false'
+        id: rebase
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          set +e
+          git rebase --onto "${{ steps.tags.outputs.target }}" "${{ steps.tags.outputs.base }}" shizuku-clipboard
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            git rebase --abort || true
+            echo "::error::Rebase onto ${{ steps.tags.outputs.target }} conflicted. Resolve by hand."
+            exit 1
+          fi
+          echo "${{ steps.tags.outputs.target }}" > .upstream-base
+          git add .upstream-base
+          git commit -q -m "Track upstream ${{ steps.tags.outputs.target }}"
+
+      - name: Verify the patch actually survived the rebase
+        if: steps.tags.outputs.already == 'false'
+        run: |
+          # A rebase can succeed mechanically while dropping the hunk we exist
+          # for. A green build that lost the feature is worse than a red one.
+          F=src/main/java/org/kde/kdeconnect/plugins/clipboard/ClipboardListener.kt
+          grep -q 'Shizuku.newProcess' "$F" \
+            || { echo "::error::Shizuku.newProcess missing from $F after rebase"; exit 1; }
+          grep -q 'dev.rikka.shizuku:api' build.gradle.kts \
+            || { echo "::error::Shizuku dependency missing from build.gradle.kts"; exit 1; }
+          grep -q 'org.kde.kdeconnect_tp.shizuku' build.gradle.kts \
+            || { echo "::error::fork applicationId missing — would install over official KDE Connect"; exit 1; }
+          echo "Patch intact."
+
+      - name: Set up JDK 17
+        if: steps.tags.outputs.already == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        if: steps.tags.outputs.already == 'false'
+        uses: android-actions/setup-android@v3
+
+      - name: Decode signing keystore
+        if: steps.tags.outputs.already == 'false'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          # A STABLE key is required. Obtainium (and Android) refuse an update
+          # signed with a different key than the installed app, so a rotating or
+          # per-run keystore silently breaks updates with
+          # INSTALL_FAILED_UPDATE_INCOMPATIBLE.
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is not set. Refusing to publish an unsignable build."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Build signed release APK
+        if: steps.tags.outputs.already == 'false'
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --console=plain \
+            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      - name: Name the artifact predictably
+        if: steps.tags.outputs.already == 'false'
+        id: apk
+        run: |
+          # Obtainium matches on a stable asset name; a hash-suffixed filename
+          # would break its update detection.
+          SRC=$(find . -path '*/release/*.apk' -name '*.apk' | head -1)
+          [ -n "$SRC" ] || { echo "::error::no release APK produced"; exit 1; }
+          OUT="kdeconnect-shizuku-${{ steps.tags.outputs.target }}.apk"
+          cp "$SRC" "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          ls -l "$OUT"
+
+      - name: Confirm the built APK is the fork, not upstream
+        if: steps.tags.outputs.already == 'false'
+        run: |
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          "$AAPT" dump badging "${{ steps.apk.outputs.path }}" | grep -q "org.kde.kdeconnect_tp.shizuku" \
+            || { echo "::error::built APK does not carry the fork applicationId"; exit 1; }
+          echo "APK identity verified."
+
+      - name: Push the rebased branch
+        if: steps.tags.outputs.already == 'false'
+        run: git push --force-with-lease origin shizuku-clipboard
+
+      - name: Publish release
+        if: steps.tags.outputs.already == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.tags.outputs.target }}-shizuku" \
+            "${{ steps.apk.outputs.path }}" \
+            --title "KDE Connect (Shizuku) ${{ steps.tags.outputs.target }}" \
+            --notes "Automatic clipboard sync via Shizuku, rebased onto upstream \
+          [${{ steps.tags.outputs.target }}](https://github.com/KDE/kdeconnect-android/releases/tag/${{ steps.tags.outputs.target }}).
+
+          See [SHIZUKU-CLIPBOARD.md](../blob/shizuku-clipboard/SHIZUKU-CLIPBOARD.md) for what this changes and why, and for credit.
+
+          Requires [Shizuku](https://shizuku.rikka.app/) with permission granted. Installs as \`org.kde.kdeconnect_tp.shizuku\`, alongside official KDE Connect."
+
+      - name: Report a failed rebase
+        if: failure() && steps.rebase.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Rebase onto ${{ steps.tags.outputs.target }} conflicted" \
+            --body "The automatic rebase from \`${{ steps.tags.outputs.base }}\` onto \`${{ steps.tags.outputs.target }}\` did not apply cleanly, so no release was published.
+
+          Most likely upstream touched \`ClipboardListener.kt\`. Resolve locally:
+
+          \`\`\`
+          git fetch upstream --tags
+          git rebase --onto ${{ steps.tags.outputs.target }} ${{ steps.tags.outputs.base }} shizuku-clipboard
+          # resolve, then:
+          echo ${{ steps.tags.outputs.target }} > .upstream-base
+          git add .upstream-base && git commit -m 'Track upstream ${{ steps.tags.outputs.target }}'
+          git push --force-with-lease
+          \`\`\`"
