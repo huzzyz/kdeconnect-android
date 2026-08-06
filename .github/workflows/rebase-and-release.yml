@@ -185,6 +185,31 @@ jobs:
 
           Requires [Shizuku](https://shizuku.rikka.app/) with permission granted. Installs as \`org.kde.kdeconnect_tp.shizuku\`, alongside official KDE Connect."
 
+      - name: Keep the repo warm so the schedule is not auto-disabled
+        if: always() && github.event_name == 'schedule'
+        run: |
+          # GitHub disables scheduled workflows on repos with 60 days of no
+          # activity. This fork only gets commits when upstream releases, so a
+          # quiet upstream would silently switch off the very automation meant
+          # to notice upstream releases -- invisible by construction.
+          #
+          # Commit only when genuinely close to the cutoff, so this does not
+          # produce a commit per day.
+          LAST=$(git log -1 --format=%ct)
+          AGE_DAYS=$(( ( $(date +%s) - LAST ) / 86400 ))
+          echo "Last commit was ${AGE_DAYS}d ago."
+          if [ "$AGE_DAYS" -ge 45 ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            date -u +"%Y-%m-%dT%H:%M:%SZ" > .heartbeat
+            git add .heartbeat
+            git commit -q -m "Heartbeat: keep the scheduled workflow enabled"
+            git push origin shizuku-clipboard
+            echo "Heartbeat committed."
+          else
+            echo "Repo is active enough; no heartbeat needed."
+          fi
+
       - name: Report a failed rebase
         if: failure() && steps.rebase.outputs.conflict == 'true'
         env:
