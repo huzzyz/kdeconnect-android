@@ -72,7 +72,11 @@ jobs:
             echo "already=false" >> "$GITHUB_OUTPUT"
             # A dry run exercises build + verification even when there is no new
             # tag. Untested release automation is its own silent-failure risk.
-            [ "${{ inputs.dry_run }}" = "true" ] && echo "Dry run: building without publishing."
+            # NOTE: an `[ ... ] && echo` as the LAST command in a branch returns
+            # its exit status, which kills the step under `bash -e`. Use if/fi.
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "Dry run: building without publishing."
+            fi
           fi
 
       - name: Rebase the patch onto the new tag
