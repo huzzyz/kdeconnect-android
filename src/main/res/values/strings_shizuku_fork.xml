@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Fork-only strings, kept in their own file.
+
+    The app label deliberately does NOT live in strings.xml: upstream edits that
+    file constantly with translation commits, so overriding the name there would
+    conflict on almost every rebase. A separate file never conflicts.
+-->
+<resources>
+    <!-- Launcher label. Marks this as a variant so it is not mistaken for
+         official KDE Connect, while still saying what it is. -->
+    <string name="app_name_shizuku_fork">KDE Connect (Shizuku)</string>
+</resources>
