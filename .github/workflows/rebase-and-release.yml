@@ -195,7 +195,7 @@ jobs:
             --notes "Automatic clipboard sync via Shizuku, rebased onto upstream \
           [${{ steps.tags.outputs.target }}](https://github.com/KDE/kdeconnect-android/releases/tag/${{ steps.tags.outputs.target }}).
 
-          See [the README](https://github.com/isonmynetwork/kdeconnect-android) for what this changes and why, and for credit.
+          See [the README](https://github.com/huzzyz/kdeconnect-shizuku) for what this changes and why, and for credit.
 
           Requires [Shizuku](https://shizuku.rikka.app/) with permission granted. Installs as \`org.kde.kdeconnect_tp.shizuku\`, alongside official KDE Connect."
 
