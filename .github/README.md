@@ -124,13 +124,27 @@ and left the rest, mostly to keep rebases painless:
 | | libdu | here |
 |---|---|---|
 | Shizuku clipboard listener | yes | yes |
+| Build type | debug | release |
+| `android:debuggable` | **true** | false |
+| APK size | 26.0 MB | 6.8 MB |
+| dex | 54.4 MB | 7.9 MB |
 | `applicationId` | `….shizuku` | same |
 | `versionName` | pinned to `1.35.9` | upstream's |
 | `.debug` suffix | removed | kept |
 | app label | edited `strings.xml` | separate file |
 
-Ours collides with theirs, same package and different keys, so uninstall one
-before installing the other.
+The build type is the one that actually matters. Their release APK has
+`android:debuggable=true`, which is why it's four times the size and why the
+dex is seven times bigger, unminified. It also means any process can attach a
+debugger to it and pull its data out with `run-as`. For an app that handles
+your clipboard, and therefore your passwords and OTP codes, that's worth
+avoiding. Removing the `.debug` suffix from the debug block, as they do, is
+what lets a debug build install under the normal package name.
+
+Ours is a plain upstream release build: minified, shrunk, not debuggable.
+
+Same package and different signing keys, so uninstall one before installing
+the other.
 
 ## If upstream ships this
 
