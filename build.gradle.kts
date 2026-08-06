@@ -38,7 +38,11 @@ android {
     namespace = "org.kde.kdeconnect_tp"
     compileSdk = 37
     defaultConfig {
-        applicationId = "org.kde.kdeconnect_tp"
+        // Renamed so this build does not install under, or be mistaken for,
+        // official KDE Connect. The GPL permits redistributing modified builds;
+        // the KDE name is a separate trademark matter. The code namespace above
+        // stays org.kde.kdeconnect_tp so the patch remains minimal.
+        applicationId = "org.kde.kdeconnect_tp.shizuku"
         minSdk = 23
         targetSdk = 37
         versionCode = 13511
