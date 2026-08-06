@@ -53,7 +53,13 @@ jobs:
           else
             # Newest vX.Y.Z tag by version order, not by date: upstream
             # occasionally tags older branches, and date order would pick those.
-            TARGET=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
+            # Query UPSTREAM directly. `git tag -l` sees local tags too, and our
+            # own release tags (v1.35.11-shizuku) sort ABOVE upstream's
+            # (v1.35.11), so it would pick our own release as the rebase target,
+            # duplicate the patch onto it, publish v...-shizuku-shizuku, and
+            # compound daily.
+            TARGET=$(git ls-remote --tags --refs upstream 'v[0-9]*' \
+                     | awk -F/ '{print $NF}' | sort -V | tail -1)
           fi
           echo "base=$BASE"     >> "$GITHUB_OUTPUT"
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
@@ -176,6 +182,22 @@ jobs:
             || { echo "::error::built APK does not carry the fork applicationId"; exit 1; }
           echo "APK identity verified."
 
+          # Verify the SIGNER too. Identity alone is not enough: if signing
+          # silently fell back to a debug key the build would publish fine and
+          # then fail to install as an update
+          # (INSTALL_FAILED_UPDATE_INCOMPATIBLE), stranding every existing user.
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          EXPECTED=$(tr -d '[:space:]' < .signing-cert-sha256)
+          ACTUAL=$("$APKSIGNER" verify --print-certs "${{ steps.apk.outputs.path }}" \
+                   | grep -i 'SHA-256 digest' | head -1 \
+                   | sed 's/.*: *//' | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::APK signer mismatch. expected=$EXPECTED actual=$ACTUAL"
+            exit 1
+          fi
+          echo "APK signer verified ($ACTUAL)."
+
       - name: Push the rebased branch
         if: steps.tags.outputs.already == 'false' && inputs.dry_run != true
         run: git push --force-with-lease origin shizuku-clipboard
@@ -200,7 +222,7 @@ jobs:
           Requires [Shizuku](https://shizuku.rikka.app/) with permission granted. Installs as \`org.kde.kdeconnect_tp.shizuku\`, alongside official KDE Connect."
 
       - name: Keep the repo warm so the schedule is not auto-disabled
-        if: always() && github.event_name == 'schedule'
+        if: "!failure() && !cancelled() && github.event_name == 'schedule'"
         run: |
           # GitHub disables scheduled workflows on repos with 60 days of no
           # activity. This fork only gets commits when upstream releases, so a
