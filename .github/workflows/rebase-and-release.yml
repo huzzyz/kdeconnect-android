@@ -185,7 +185,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # --repo is REQUIRED: in a fork checkout gh resolves the repo from
+          # git remotes and prefers the PARENT, so this otherwise tries to
+          # publish a release on KDE/kdeconnect-android and gets a 403.
           gh release create "${{ steps.tags.outputs.target }}-shizuku" \
+            --repo "${{ github.repository }}" \
             "${{ steps.apk.outputs.path }}" \
             --title "KDE Connect (Shizuku) ${{ steps.tags.outputs.target }}" \
             --notes "Automatic clipboard sync via Shizuku, rebased onto upstream \
@@ -226,6 +230,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue create \
+            --repo "${{ github.repository }}" \
             --title "Rebase onto ${{ steps.tags.outputs.target }} conflicted" \
             --body "The automatic rebase from \`${{ steps.tags.outputs.base }}\` onto \`${{ steps.tags.outputs.target }}\` did not apply cleanly, so no release was published.
 
