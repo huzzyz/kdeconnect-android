@@ -134,12 +134,19 @@ and left the rest, mostly to keep rebases painless:
 | app label | edited `strings.xml` | separate file |
 
 The build type is the one that actually matters. Their release APK has
-`android:debuggable=true`, which is why it's four times the size and why the
-dex is seven times bigger, unminified. It also means any process can attach a
-debugger to it and pull its data out with `run-as`. For an app that handles
-your clipboard, and therefore your passwords and OTP codes, that's worth
-avoiding. Removing the `.debug` suffix from the debug block, as they do, is
-what lets a debug build install under the normal package name.
+`android:debuggable=true`, which is why it's four times the size and the dex
+seven times bigger, unminified. More to the point, a debuggable app can have a
+debugger attached by any process and its data directory pulled out with
+`run-as`.
+
+That's worth avoiding on KDE Connect specifically, because it isn't just
+clipboard. It mirrors your notifications, so 2FA codes, message previews and
+email subjects all pass through it. It handles SMS, file transfers, remote
+input and media control, and its data directory holds the device pairing keys.
+That's a lot to leave debuggable.
+
+Removing the `.debug` suffix from the debug block, as they do, is what lets a
+debug build install under the normal package name.
 
 Ours is a plain upstream release build: minified, shrunk, not debuggable.
 
