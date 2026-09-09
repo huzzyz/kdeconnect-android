@@ -113,6 +113,8 @@ jobs:
           F=src/main/java/org/kde/kdeconnect/plugins/clipboard/ClipboardListener.kt
           grep -q 'Shizuku.newProcess' "$F" \
             || { echo "::error::Shizuku.newProcess missing from $F after rebase"; exit 1; }
+          grep -q 'addBinderDeadListener' "$F" \
+            || { echo "::error::Shizuku binder recovery missing from $F after rebase"; exit 1; }
           grep -q 'dev.rikka.shizuku:api' build.gradle.kts \
             || { echo "::error::Shizuku dependency missing from build.gradle.kts"; exit 1; }
           grep -q 'org.kde.kdeconnect_tp.shizuku' build.gradle.kts \
@@ -155,6 +157,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
+          ./gradlew testDebugUnitTest --console=plain
           ./gradlew assembleRelease --console=plain \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
