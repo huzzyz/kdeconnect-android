@@ -201,6 +201,15 @@ jobs:
           fi
           echo "APK signer verified ($ACTUAL)."
 
+      - name: Retain verified APK for device testing
+        if: steps.tags.outputs.already == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdeconnect-shizuku-${{ github.sha }}
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Push the rebased branch
         if: steps.tags.outputs.already == 'false' && inputs.dry_run != true
         run: git push --force-with-lease origin shizuku-clipboard
