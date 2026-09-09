@@ -165,7 +165,11 @@ class ClipboardListener {
                 }
                 val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
                 val logcatFilter = if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) { "E ClipboardService" } else { "ClipboardService:E" }
-                val newProcess = Shizuku.newProcess(arrayOf("logcat", "-T", timeStamp, logcatFilter, "*:S"), null, null)
+                val newProcess = Shizuku.newProcess(
+                    arrayOf("/system/bin/logcat", "-T", timeStamp, logcatFilter, "*:S"),
+                    arrayOf(SHIZUKU_MONITOR_ENVIRONMENT),
+                    null,
+                )
                 process = newProcess
                 synchronized(shizukuMonitorLock) {
                     if (generation != shizukuMonitorGeneration || !isShizukuAvailableAndAuthorized()) {
@@ -207,9 +211,8 @@ class ClipboardListener {
     private fun stopOrphanedShizukuLogcatListeners() {
         var cleanupProcess: Process? = null
         try {
-            val shizukuUid = Shizuku.getUid().toString()
             cleanupProcess = Shizuku.newProcess(
-                arrayOf("pkill", "-u", shizukuUid, "-f", SHIZUKU_LOGCAT_PROCESS_PATTERN),
+                arrayOf("/system/bin/sh", "-c", shizukuMonitorCleanupCommand()),
                 null,
                 null,
             )
@@ -303,7 +306,14 @@ class ClipboardListener {
 
     companion object {
         private const val TAG = "ClipboardListener"
-        private const val SHIZUKU_LOGCAT_PROCESS_PATTERN = "^logcat -T .*ClipboardService.*\\*:S$"
+        internal const val SHIZUKU_MONITOR_ENVIRONMENT =
+            "KDECONNECT_SHIZUKU_CLIPBOARD_MONITOR=org.kde.kdeconnect_tp.shizuku.v1"
+
+        internal fun shizukuMonitorCleanupCommand(): String =
+            "for pid in \$(/system/bin/pidof logcat 2>/dev/null); do " +
+                "/system/bin/tr '\\000' '\\n' < /proc/\$pid/environ 2>/dev/null | " +
+                "/system/bin/grep -Fxq '$SHIZUKU_MONITOR_ENVIRONMENT' && /system/bin/kill \"\$pid\"; " +
+                "done; true"
         private var _instance: ClipboardListener? = null
 
         @JvmStatic
