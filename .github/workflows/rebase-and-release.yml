@@ -46,10 +46,14 @@ jobs:
 
       - name: Work out base and target tags
         id: tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           BASE=$(cat .upstream-base)
-          if [ -n "${{ inputs.tag }}" ]; then
-            TARGET="${{ inputs.tag }}"
+          if [ -n "$REQUESTED_TAG" ]; then
+            TARGET="$REQUESTED_TAG"
           else
             # Newest vX.Y.Z tag by version order, not by date: upstream
             # occasionally tags older branches, and date order would pick those.
@@ -64,23 +68,33 @@ jobs:
           echo "base=$BASE"     >> "$GITHUB_OUTPUT"
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
           echo "Base: $BASE   Target: $TARGET"
+          RELEASE_TAG="${TARGET}-shizuku"
+          RELEASE_ASSET="kdeconnect-shizuku-${TARGET}.apk"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_asset=$RELEASE_ASSET" >> "$GITHUB_OUTPUT"
 
           # Proceed when: there is a newer tag, OR a tag was named explicitly
           # (deliberate rebuild/first release), OR this is a dry run. Without the
           # explicit-tag case there is no way to publish the FIRST release, since
           # base and target match until upstream moves.
           if [ "$BASE" = "$TARGET" ] \
-             && [ "${{ inputs.dry_run }}" != "true" ] \
-             && [ -z "${{ inputs.tag }}" ]; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "Already on the newest upstream tag; nothing to do."
+             && [ "$DRY_RUN" != "true" ] \
+             && [ -z "$REQUESTED_TAG" ]; then
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+                --json assets --jq '.assets[].name' 2>/dev/null | grep -Fxq "$RELEASE_ASSET"; then
+              echo "already=true" >> "$GITHUB_OUTPUT"
+              echo "Newest upstream tag and its APK release already exist."
+            else
+              echo "already=false" >> "$GITHUB_OUTPUT"
+              echo "Upstream base is current, but the release asset is absent; rebuilding it."
+            fi
           else
             echo "already=false" >> "$GITHUB_OUTPUT"
             # A dry run exercises build + verification even when there is no new
             # tag. Untested release automation is its own silent-failure risk.
             # NOTE: an `[ ... ] && echo` as the LAST command in a branch returns
             # its exit status, which kills the step under `bash -e`. Use if/fi.
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
+            if [ "$DRY_RUN" = "true" ]; then
               echo "Dry run: building without publishing."
             fi
           fi
@@ -222,16 +236,23 @@ jobs:
           # --repo is REQUIRED: in a fork checkout gh resolves the repo from
           # git remotes and prefers the PARENT, so this otherwise tries to
           # publish a release on KDE/kdeconnect-android and gets a 403.
-          gh release create "${{ steps.tags.outputs.target }}-shizuku" \
-            --repo "${{ github.repository }}" \
-            "${{ steps.apk.outputs.path }}" \
-            --title "KDE Connect (Shizuku) ${{ steps.tags.outputs.target }}" \
-            --notes "Automatic clipboard sync via Shizuku, rebased onto upstream \
+          RELEASE_TAG="${{ steps.tags.outputs.release_tag }}"
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              "${{ steps.apk.outputs.path }}" --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "${{ github.repository }}" \
+              "${{ steps.apk.outputs.path }}" \
+              --title "KDE Connect (Shizuku) ${{ steps.tags.outputs.target }}" \
+              --notes "Automatic clipboard sync via Shizuku, rebased onto upstream \
           [${{ steps.tags.outputs.target }}](https://github.com/KDE/kdeconnect-android/releases/tag/${{ steps.tags.outputs.target }}).
 
           See [the README](https://github.com/huzzyz/kdeconnect-android) for what this changes and why, and for credit.
 
           Requires [Shizuku](https://shizuku.rikka.app/) with permission granted. Installs as \`org.kde.kdeconnect_tp.shizuku\`, alongside official KDE Connect."
+          fi
 
       - name: Keep the repo warm so the schedule is not auto-disabled
         if: "!failure() && !cancelled() && github.event_name == 'schedule'"

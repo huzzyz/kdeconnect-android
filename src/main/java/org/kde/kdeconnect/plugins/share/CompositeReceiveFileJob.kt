@@ -21,6 +21,7 @@ import org.kde.kdeconnect.NetworkPacket
 import org.kde.kdeconnect.async.BackgroundJob
 import org.kde.kdeconnect.helpers.FilesHelper
 import org.kde.kdeconnect.helpers.MediaStoreHelper
+import org.kde.kdeconnect_tp.BuildConfig
 import org.kde.kdeconnect_tp.R
 import java.io.BufferedOutputStream
 import java.io.File
@@ -381,7 +382,7 @@ class CompositeReceiveFileJob(device: Device, callBack: Callback<Unit>)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             // Nougat and later require "content://" uris instead of "file://" uris
             val file = File(fileDocument.uri.path ?: "")
-            val contentUri = FileProvider.getUriForFile(device.context, "org.kde.kdeconnect_tp.fileprovider", file)
+            val contentUri = FileProvider.getUriForFile(device.context, BuildConfig.APPLICATION_ID + ".fileprovider", file)
             intent.setDataAndType(contentUri, mimeType)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         } else {
