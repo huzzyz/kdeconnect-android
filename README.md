@@ -1,87 +1,113 @@
-# KDE Connect for Android with Shizuku clipboard sync
+<div align="center">
+  <img src="icon.svg" width="112" alt="KDE Connect logo">
+  <h1>KDE Connect with Shizuku clipboard sync</h1>
+  <p>Reliable Android-to-desktop clipboard sharing on modern Android, without polling or an extra foreground service.</p>
 
-This fork adds automatic Android-to-desktop clipboard synchronization to KDE
-Connect on current Android versions. Android normally blocks apps from reading
-the clipboard while they run in the background. This build uses an authorized
-[Shizuku](https://shizuku.rikka.app/) service to detect clipboard changes and
-passes them through KDE Connect's existing encrypted device connection.
+  [![Build and release](https://github.com/huzzyz/kdeconnect-android/actions/workflows/rebase-and-release.yml/badge.svg?branch=shizuku-clipboard)](https://github.com/huzzyz/kdeconnect-android/actions/workflows/rebase-and-release.yml)
+  [![Latest release](https://img.shields.io/github/v/release/huzzyz/kdeconnect-android?include_prereleases&label=APK)](https://github.com/huzzyz/kdeconnect-android/releases/latest)
+  [![Upstream KDE Connect](https://img.shields.io/badge/upstream-KDE%20Connect-54a3d8)](https://invent.kde.org/network/kdeconnect-android)
+</div>
 
-The project tracks the upstream
-[KDE Connect Android application](https://invent.kde.org/network/kdeconnect-android).
-The `shizuku-clipboard` branch carries the changes needed for Shizuku clipboard
-support and rebases onto new upstream releases.
+---
 
-## Features
+Android restricts clipboard access when an app runs in the background. This fork uses an authorized [Shizuku](https://shizuku.rikka.app/) service to detect clipboard changes, then sends them through KDE Connect's existing encrypted device connection.
 
-- Automatic clipboard synchronization from Android to a paired computer
-- Standard KDE Connect clipboard synchronization from a computer to Android
-- Automatic recovery when Shizuku stops, restarts, or replaces its Binder
-- Cleanup of clipboard monitors left behind by an interrupted Shizuku session
-- All upstream KDE Connect features, including notifications, file sharing,
-  media control, remote input, and device status
+The `shizuku-clipboard` branch stays close to the upstream [KDE Connect Android app](https://invent.kde.org/network/kdeconnect-android) and rebases onto new upstream releases.
 
-## Reliable recovery
+## What you get
 
-Older builds checked the Shizuku connection once when KDE Connect started. If
-Shizuku restarted later, KDE Connect could retain a stale connection and stop
-sending clipboard changes until you revoked and granted permission again.
+| Capability | Behaviour |
+| --- | --- |
+| Android → desktop clipboard | Copies new Android clipboard text to paired devices automatically |
+| Desktop → Android clipboard | Uses KDE Connect's standard clipboard integration |
+| Shizuku recovery | Reconnects after Shizuku stops, restarts, or replaces its Binder |
+| Interrupted-session cleanup | Removes only orphaned monitors created by this fork |
+| Side-by-side installation | Uses `org.kde.kdeconnect_tp.shizuku`, separate from the official Android app |
+| Upstream features | Keeps notifications, file sharing, media control, remote input, device status, and other KDE Connect features |
 
-This fork listens for Shizuku Binder lifecycle events. When Shizuku disconnects,
-KDE Connect closes its stale clipboard monitor. When Shizuku returns, KDE
-Connect checks authorization and starts one replacement monitor. It also removes
-orphaned monitors left by an Android process restart.
+## Quick start
 
-Recovery uses event callbacks. It does not run a periodic health check, acquire
-an additional wake lock, or add another foreground service. If a replacement
-monitor exits during startup, KDE Connect retries after 1, 2, 4, 8, 16, and 30
-seconds, then waits for the next Shizuku connection event. A received clipboard
-event resets that retry budget.
+### 1. Start Shizuku
+
+Install [Shizuku](https://shizuku.rikka.app/), start its service through wireless debugging or root, and leave the service running.
+
+Wireless-debugging startup must usually be repeated after the phone reboots. Some compatible Shizuku managers provide their own restart mechanism.
+
+### 2. Install the APK
+
+Download the newest APK from [Releases](https://github.com/huzzyz/kdeconnect-android/releases/latest), then open it on the phone and approve installation from that source.
+
+The fork installs beside official KDE Connect. Future APKs signed with the same release key update this fork in place and preserve its pairing data.
+
+### 3. Grant access
+
+Open Shizuku's **Authorized applications**, select **KDE Connect (Shizuku)**, and grant permission.
+
+### 4. Pair and enable clipboard sync
+
+Open KDE Connect on the phone and computer, pair the devices, then enable the **Clipboard** plugin for that device.
+
+Copy text on either device to test both directions:
+
+```text
+Android clipboard  ───────▶  Shizuku monitor  ───────▶  KDE Connect  ───────▶  Desktop
+Desktop clipboard  ────────────────────────────────▶  KDE Connect  ───────▶  Android
+```
+
+## Recovery and battery use
+
+The fork listens for Shizuku Binder lifecycle events. When Shizuku disconnects, KDE Connect closes its stale clipboard monitor. When Shizuku returns, the app checks authorization, removes monitors previously marked as its own, and starts one replacement.
+
+Recovery does not add a polling loop, wake lock, or foreground service. A failed monitor start retries after 1, 2, 4, 8, 16, and 30 seconds. It then waits for the next Shizuku connection event. A received clipboard event resets that retry budget.
 
 ## Requirements
 
 - Android 6 or newer
 - Shizuku or a compatible Shizuku manager
-- A running Shizuku service started through wireless debugging or root
-- KDE Connect installed on the computer
-- Network connectivity between both devices
+- KDE Connect on the computer
+- Both devices reachable over the same network or another working KDE Connect route
+- Clipboard plugin enabled for the paired device
 
-Shizuku started through wireless debugging normally needs to start again after
-the phone reboots. Compatible Shizuku forks may provide their own watchdog or
-restart mechanism.
+## Troubleshooting
 
-## Installation
+### Android → desktop stops working
 
-1. Install Shizuku and start its service.
-2. Download the APK from this repository's
-   [Releases](https://github.com/huzzyz/kdeconnect-android/releases) page.
-3. Install the APK and open **KDE Connect (Shizuku)**.
-4. Grant KDE Connect access from Shizuku's authorized applications list.
-5. Pair the phone with KDE Connect on your computer.
-6. Enable **Clipboard sync** for the paired device.
+1. Confirm Shizuku says **Running**.
+2. Confirm **KDE Connect (Shizuku)** remains authorized in Shizuku.
+3. Open KDE Connect and check that the computer is reachable.
+4. Check that the paired device's **Clipboard** plugin is enabled.
+5. Restart Shizuku. The fork should reconnect without revoking and granting permission again.
 
-The fork uses the package name `org.kde.kdeconnect_tp.shizuku`, so it does not
-replace the official KDE Connect Android application. Android preserves pairing
-and settings when you update this fork with an APK signed by the same release
-key.
+### Desktop → Android stops working
 
-## Building
+Check the desktop KDE Connect clipboard plugin and device connection first. This direction uses the standard KDE Connect implementation and does not depend on Shizuku clipboard monitoring.
 
-Open the repository in Android Studio or build it with Gradle:
+### The devices cannot find each other
+
+Confirm both devices use the same network, disable client isolation or guest-network isolation, and allow KDE Connect through the computer firewall. VPN and multi-VLAN setups may need explicit routing and firewall rules.
+
+### Installation reports a signature conflict
+
+Android only accepts an in-place update when the signing certificate matches. Uninstall an incompatible build before installing this fork. Uninstalling removes that build's local pairing and settings.
+
+## Security model
+
+Shizuku grants elevated API access to applications you authorize. Grant access only to APKs you trust. This fork uses that permission to start the clipboard log monitor; KDE Connect continues to handle device pairing, encryption, and clipboard transport.
+
+The release workflow builds a signed APK, verifies its package ID and signing certificate, runs unit tests, and retains the verified artifact. Automated releases track the latest upstream version tag.
+
+## Build from source
+
+Open the project in Android Studio, or run:
 
 ```shell
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-Release builds require the signing configuration used by the release workflow.
-The workflow verifies the package name and signing certificate before it
-publishes an APK.
+Release builds require the signing configuration used by the GitHub Actions workflow.
 
 ## Upstream and licensing
 
-Report problems specific to Shizuku clipboard handling in this repository. For
-general KDE Connect bugs and upstream development, use the
-[KDE bug tracker](https://bugs.kde.org/) and
-[KDE Connect project](https://invent.kde.org/network/kdeconnect-android).
+Report Shizuku clipboard problems in this repository. Report general KDE Connect issues through the [KDE bug tracker](https://bugs.kde.org/) or the [upstream project](https://invent.kde.org/network/kdeconnect-android).
 
-KDE Connect is licensed under the GNU General Public License. See
-[COPYING](COPYING) and the files under [LICENSES](LICENSES) for details.
+KDE Connect is licensed under the GNU General Public License. See [COPYING](COPYING) and [LICENSES](LICENSES) for details.
