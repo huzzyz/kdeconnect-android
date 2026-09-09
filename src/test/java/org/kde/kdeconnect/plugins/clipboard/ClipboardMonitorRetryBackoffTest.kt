@@ -12,7 +12,7 @@ class ClipboardMonitorRetryBackoffTest {
         val backoff = ClipboardMonitorRetryBackoff(
             initialDelayMs = 10,
             maximumDelayMs = 40,
-            maximumAttempts = 5,
+            maximumAttempts = 4,
         )
 
         assertEquals(10L, backoff.nextDelayMs())
