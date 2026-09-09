@@ -15,10 +15,10 @@ class ClipboardMonitorRetryBackoffTest {
             maximumAttempts = 5,
         )
 
-        assertEquals(10, backoff.nextDelayMs())
-        assertEquals(20, backoff.nextDelayMs())
-        assertEquals(40, backoff.nextDelayMs())
-        assertEquals(40, backoff.nextDelayMs())
+        assertEquals(10L, backoff.nextDelayMs())
+        assertEquals(20L, backoff.nextDelayMs())
+        assertEquals(40L, backoff.nextDelayMs())
+        assertEquals(40L, backoff.nextDelayMs())
         assertEquals(null, backoff.nextDelayMs())
     }
 
@@ -35,6 +35,6 @@ class ClipboardMonitorRetryBackoffTest {
         assertEquals(null, backoff.nextDelayMs())
         backoff.reset()
 
-        assertEquals(10, backoff.nextDelayMs())
+        assertEquals(10L, backoff.nextDelayMs())
     }
 }
