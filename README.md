@@ -120,6 +120,14 @@ Open the project in Android Studio, or run:
 
 Release builds require the signing configuration used by the GitHub Actions workflow.
 
+## Credits
+
+[KDE Connect](https://invent.kde.org/network/kdeconnect-android) provides the application, clipboard plugin, and original logcat-based clipboard workaround.
+
+[libdu/kde-connect-shizuku](https://github.com/libdu/kde-connect-shizuku) demonstrated the Shizuku approach. This fork began with the relevant changes from [commit `9239e3a6`](https://github.com/libdu/kde-connect-shizuku/commit/9239e3a6).
+
+Discussion in the [KDE community thread](https://discuss.kde.org/t/kde-connect-clipboard-sync/6422) documented the `READ_LOGS` workaround and its failures on newer Android releases.
+
 ## Upstream and licensing
 
 Report Shizuku clipboard problems in this repository. Report general KDE Connect issues through the [KDE bug tracker](https://bugs.kde.org/) or the [upstream project](https://invent.kde.org/network/kdeconnect-android).
