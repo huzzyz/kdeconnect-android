@@ -13,6 +13,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import org.kde.kdeconnect.helpers.ThreadHelper.execute
@@ -46,25 +47,53 @@ class ClipboardListener {
 
     private lateinit var cm: ClipboardManager
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val shizukuMonitorLock = Any()
+    private var shizukuLogcatProcess: Process? = null
+    private var shizukuMonitorStarting = false
+    private var shizukuMonitorGeneration = 0L
+    private var shizukuPermissionRequestPending = false
+    private val shizukuRetryBackoff = ClipboardMonitorRetryBackoff()
+
+    private val shizukuBinderReceivedListener = Shizuku.OnBinderReceivedListener {
+        Log.i(TAG, "Shizuku binder received; refreshing clipboard monitor")
+        stopShizukuLogcatListener()
+        shizukuRetryBackoff.reset()
+        if (isShizukuAvailableAndAuthorized()) {
+            startShizukuLogcatListener()
+        } else {
+            requestShizukuPermission()
+        }
+    }
+
+    private val shizukuBinderDeadListener = Shizuku.OnBinderDeadListener {
+        Log.w(TAG, "Shizuku binder died; stopping stale clipboard monitor")
+        stopShizukuLogcatListener()
+    }
+
+    private val shizukuRestart = Runnable {
+        if (isShizukuAvailableAndAuthorized()) {
+            startShizukuLogcatListener()
+        }
+    }
+
     private constructor(ctx: Context) {
         context = ctx.applicationContext
-        Handler(Looper.getMainLooper()).post {
+        mainHandler.post {
             cm = ContextCompat.getSystemService(context, ClipboardManager::class.java)!!
             cm.addPrimaryClipChangedListener { this.onClipboardChanged() }
         }
 
-        // Prioritize Shizuku
-        if (isShizukuAvailableAndAuthorized()) {
-            startShizukuLogcatListener()
-        } else if (Shizuku.pingBinder()) {
-            requestShizukuPermission()
-        } else if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P &&
+        Shizuku.addBinderDeadListener(shizukuBinderDeadListener)
+        Shizuku.addBinderReceivedListenerSticky(shizukuBinderReceivedListener)
+
+        if (!Shizuku.pingBinder() && Build.VERSION.SDK_INT > Build.VERSION_CODES.P &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED) {
             // Fallback to legacy READ_LOGS implementation
             startLogcatListener()
-        } else {
+        } else if (!Shizuku.pingBinder()) {
             // Notify user that Shizuku or ADB permissions are missing
-            Handler(Looper.getMainLooper()).post {
+            mainHandler.post {
                 Toast.makeText(context, "Clipboard sync requires Shizuku or ADB permissions", Toast.LENGTH_LONG).show()
             }
         }
@@ -79,9 +108,19 @@ class ClipboardListener {
     }
 
     private fun requestShizukuPermission() {
+        synchronized(shizukuMonitorLock) {
+            if (shizukuPermissionRequestPending) {
+                return
+            }
+            shizukuPermissionRequestPending = true
+        }
         val listener = object : Shizuku.OnRequestPermissionResultListener {
             override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
+                synchronized(shizukuMonitorLock) {
+                    shizukuPermissionRequestPending = false
+                }
                 if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                    shizukuRetryBackoff.reset()
                     startShizukuLogcatListener()
                 } else {
                     Handler(Looper.getMainLooper()).post {
@@ -95,6 +134,10 @@ class ClipboardListener {
         try {
             Shizuku.requestPermission(0)
         } catch (e: Exception) {
+            synchronized(shizukuMonitorLock) {
+                shizukuPermissionRequestPending = false
+            }
+            Shizuku.removeRequestPermissionResultListener(listener)
             Handler(Looper.getMainLooper()).post {
                 Toast.makeText(context, "Shizuku service unavailable", Toast.LENGTH_LONG).show()
             }
@@ -102,22 +145,77 @@ class ClipboardListener {
     }
 
     private fun startShizukuLogcatListener() {
+        val generation = synchronized(shizukuMonitorLock) {
+            if (shizukuLogcatProcess != null || shizukuMonitorStarting || !isShizukuAvailableAndAuthorized()) {
+                return
+            }
+            shizukuMonitorStarting = true
+            ++shizukuMonitorGeneration
+        }
+
         execute {
+            var process: Process? = null
             try {
                 val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
                 val logcatFilter = if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) { "E ClipboardService" } else { "ClipboardService:E" }
-                val process = Shizuku.newProcess(arrayOf("logcat", "-T", timeStamp, logcatFilter, "*:S"), null, null)
-                val bufferedReader = BufferedReader(InputStreamReader(process.inputStream))
+                val newProcess = Shizuku.newProcess(arrayOf("logcat", "-T", timeStamp, logcatFilter, "*:S"), null, null)
+                process = newProcess
+                synchronized(shizukuMonitorLock) {
+                    if (generation != shizukuMonitorGeneration || !isShizukuAvailableAndAuthorized()) {
+                        shizukuMonitorStarting = false
+                        newProcess.destroy()
+                        return@execute
+                    }
+                    shizukuMonitorStarting = false
+                    shizukuLogcatProcess = newProcess
+                }
+                val bufferedReader = BufferedReader(InputStreamReader(newProcess.inputStream))
                 bufferedReader.forEachLine { line ->
                     if (line.contains(BuildConfig.APPLICATION_ID)) {
+                        // Receiving an event proves this replacement monitor is healthy.
+                        shizukuRetryBackoff.reset()
                         context.startActivity(ClipboardFloatingActivity.getIntent(context, false))
                     }
                 }
-                process.destroy()
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.w(TAG, "Shizuku clipboard monitor stopped", e)
+            } finally {
+                process?.destroy()
+                val shouldRestart = synchronized(shizukuMonitorLock) {
+                    if (generation == shizukuMonitorGeneration) {
+                        shizukuMonitorStarting = false
+                        shizukuLogcatProcess = null
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (shouldRestart && isShizukuAvailableAndAuthorized()) {
+                    scheduleShizukuRestart()
+                }
             }
         }
+    }
+
+    private fun stopShizukuLogcatListener() {
+        val process = synchronized(shizukuMonitorLock) {
+            ++shizukuMonitorGeneration
+            shizukuMonitorStarting = false
+            shizukuLogcatProcess.also { shizukuLogcatProcess = null }
+        }
+        mainHandler.removeCallbacks(shizukuRestart)
+        process?.destroy()
+    }
+
+    private fun scheduleShizukuRestart() {
+        val delay = shizukuRetryBackoff.nextDelayMs()
+        if (delay == null) {
+            Log.e(TAG, "Shizuku clipboard monitor restart limit reached; waiting for a new binder")
+            return
+        }
+        Log.i(TAG, "Restarting Shizuku clipboard monitor in ${delay}ms")
+        mainHandler.removeCallbacks(shizukuRestart)
+        mainHandler.postDelayed(shizukuRestart, delay)
     }
 
     private fun startLogcatListener() {
@@ -180,6 +278,7 @@ class ClipboardListener {
     }
 
     companion object {
+        private const val TAG = "ClipboardListener"
         private var _instance: ClipboardListener? = null
 
         @JvmStatic
@@ -200,5 +299,31 @@ class ClipboardListener {
             }
             return ClipboardContentType.Text
         }
+    }
+}
+
+internal class ClipboardMonitorRetryBackoff(
+    private val initialDelayMs: Long = 1_000L,
+    private val maximumDelayMs: Long = 30_000L,
+    private val maximumAttempts: Int = 6,
+) {
+    private var nextDelayMs = initialDelayMs
+    private var attempts = 0
+
+    @Synchronized
+    fun nextDelayMs(): Long? {
+        if (attempts >= maximumAttempts) {
+            return null
+        }
+        attempts++
+        val delay = nextDelayMs
+        nextDelayMs = (nextDelayMs * 2).coerceAtMost(maximumDelayMs)
+        return delay
+    }
+
+    @Synchronized
+    fun reset() {
+        nextDelayMs = initialDelayMs
+        attempts = 0
     }
 }
