@@ -156,6 +156,13 @@ class ClipboardListener {
         execute {
             var process: Process? = null
             try {
+                stopOrphanedShizukuLogcatListeners()
+                synchronized(shizukuMonitorLock) {
+                    if (generation != shizukuMonitorGeneration || !isShizukuAvailableAndAuthorized()) {
+                        shizukuMonitorStarting = false
+                        return@execute
+                    }
+                }
                 val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
                 val logcatFilter = if (Build.VERSION.SDK_INT > Build.VERSION_CODES.VANILLA_ICE_CREAM) { "E ClipboardService" } else { "ClipboardService:E" }
                 val newProcess = Shizuku.newProcess(arrayOf("logcat", "-T", timeStamp, logcatFilter, "*:S"), null, null)
@@ -194,6 +201,23 @@ class ClipboardListener {
                     scheduleShizukuRestart()
                 }
             }
+        }
+    }
+
+    private fun stopOrphanedShizukuLogcatListeners() {
+        var cleanupProcess: Process? = null
+        try {
+            val shizukuUid = Shizuku.getUid().toString()
+            cleanupProcess = Shizuku.newProcess(
+                arrayOf("pkill", "-u", shizukuUid, "-f", SHIZUKU_LOGCAT_PROCESS_PATTERN),
+                null,
+                null,
+            )
+            cleanupProcess.waitFor()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not clean up stale Shizuku clipboard monitors", e)
+        } finally {
+            cleanupProcess?.destroy()
         }
     }
 
@@ -279,6 +303,7 @@ class ClipboardListener {
 
     companion object {
         private const val TAG = "ClipboardListener"
+        private const val SHIZUKU_LOGCAT_PROCESS_PATTERN = "^logcat -T .*ClipboardService.*\\*:S$"
         private var _instance: ClipboardListener? = null
 
         @JvmStatic
