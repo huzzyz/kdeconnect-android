@@ -45,6 +45,9 @@ import java.security.MessageDigest
 import java.util.Locale
 import androidx.core.graphics.createBitmap
 
+internal fun isOwnNotificationPackage(notificationPackage: String, applicationPackage: String): Boolean =
+    notificationPackage == applicationPackage
+
 @LoadablePlugin
 class NotificationsPlugin : Plugin(), NotificationReceiver.NotificationListener {
     private lateinit var appDatabase: AppDatabase
@@ -214,7 +217,7 @@ class NotificationsPlugin : Plugin(), NotificationReceiver.NotificationListener 
             }
         }
 
-        if ("org.kde.kdeconnect_tp" == packageName || "org.kde.kdeconnect_tp.debug" == packageName) {
+        if (isOwnNotificationPackage(packageName, context.packageName)) {
             // Don't send our own notifications
             return
         }
