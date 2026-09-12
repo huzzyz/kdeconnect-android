@@ -284,6 +284,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "$(gh repo view "${{ github.repository }}" --json hasIssuesEnabled --jq .hasIssuesEnabled)" != "true" ]; then
+            echo "Issues are disabled; the rebase error above is the actionable failure." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           gh issue create \
             --repo "${{ github.repository }}" \
             --title "Rebase onto ${{ steps.tags.outputs.target }} conflicted" \
