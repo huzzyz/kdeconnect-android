@@ -6,8 +6,9 @@ name: Rebase onto upstream and release
 # and no self-hosted runner is needed.
 #
 # The patch is deliberately tiny (see SHIZUKU-CLIPBOARD.md), so the rebase is
-# normally uneventful. When it is not, this fails loudly and opens an issue
-# rather than publishing a stale or half-applied build.
+# normally uneventful. When it is not, this fails loudly, retains diagnostics,
+# and opens an issue when Issues are enabled rather than publishing a stale or
+# half-applied build.
 
 on:
   # daily poll for new upstream tags; off-the-hour to avoid the cron stampede
@@ -34,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout fork (full history — rebase needs it)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: shizuku-clipboard
           fetch-depth: 0
@@ -111,6 +112,20 @@ jobs:
           set -e
           if [ $RC -ne 0 ]; then
             echo "conflict=true" >> "$GITHUB_OUTPUT"
+            DIAGNOSTICS="$RUNNER_TEMP/rebase-conflict"
+            mkdir -p "$DIAGNOSTICS"
+            git diff --name-only --diff-filter=U | tee "$DIAGNOSTICS/conflicting-files.txt"
+            git diff > "$DIAGNOSTICS/rebase-conflict.patch"
+            {
+              echo "## Rebase conflict"
+              echo
+              echo "Rebase from \`${{ steps.tags.outputs.base }}\` onto \`${{ steps.tags.outputs.target }}\` failed."
+              echo
+              echo "Conflicting files:"
+              sed 's/^/- `/' "$DIAGNOSTICS/conflicting-files.txt" | sed 's/$/`/'
+              echo
+              echo "A \`rebase-conflict-diagnostics\` artifact contains the file list and conflict patch."
+            } >> "$GITHUB_STEP_SUMMARY"
             git rebase --abort || true
             echo "::error::Rebase onto ${{ steps.tags.outputs.target }} conflicted. Resolve by hand."
             exit 1
@@ -137,7 +152,7 @@ jobs:
 
       - name: Set up JDK 17
         if: steps.tags.outputs.already == 'false'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -145,7 +160,7 @@ jobs:
 
       - name: Set up Android SDK
         if: steps.tags.outputs.already == 'false'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Decode signing keystore
         if: steps.tags.outputs.already == 'false'
@@ -217,11 +232,20 @@ jobs:
 
       - name: Retain verified APK for device testing
         if: steps.tags.outputs.already == 'false'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kdeconnect-shizuku-${{ github.sha }}
           path: ${{ steps.apk.outputs.path }}
           retention-days: 7
+          if-no-files-found: error
+
+      - name: Retain failed rebase diagnostics
+        if: failure() && steps.rebase.outputs.conflict == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: rebase-conflict-diagnostics
+          path: ${{ runner.temp }}/rebase-conflict
+          retention-days: 14
           if-no-files-found: error
 
       - name: Push the rebased branch
