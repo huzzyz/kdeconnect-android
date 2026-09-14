@@ -19,7 +19,9 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.annotation.MainThread
 import androidx.core.app.NotificationCompat
@@ -51,6 +53,8 @@ class BackgroundService : Service() {
     private lateinit var applicationInstance: KdeConnect
 
     private val linkProviders = mutableListOf<BaseLinkProvider>()
+    private lateinit var wifiReconnectRetryController: WifiReconnectRetryController
+    private var reconnectWifiNetwork: Network? = null
 
     private var screenOnReceiver: KdeConnectBroadcastReceiver? = null
     private var networkCallback: NetworkCallback? = null
@@ -65,6 +69,11 @@ class BackgroundService : Service() {
             val notificationManager = getSystemService<NotificationManager>()
             notificationManager?.notify(FOREGROUND_NOTIFICATION_ID, createForegroundNotification())
         }
+    }
+
+    private fun onDeviceListChanged() {
+        updateForegroundNotification()
+        wifiReconnectRetryController.cancelIfConnected()
     }
 
     private fun registerLinkProviders() {
@@ -104,7 +113,15 @@ class BackgroundService : Service() {
         this.applicationInstance = KdeConnect.getInstance()
         instance = this
 
-        KdeConnect.getInstance().addDeviceListChangedCallback("BackgroundService", this::updateForegroundNotification)
+        wifiReconnectRetryController = WifiReconnectRetryController(
+            scheduler = HandlerDelayedTaskScheduler(Handler(Looper.getMainLooper())),
+            hasReachablePairedDevice = {
+                applicationInstance.devices.values.any { it.isPaired && it.isReachable }
+            },
+            refreshConnections = { onNetworkChange(null) },
+        )
+
+        KdeConnect.getInstance().addDeviceListChangedCallback("BackgroundService", this::onDeviceListChanged)
 
         // Register screen on listener
         val filter = IntentFilter(Intent.ACTION_SCREEN_ON)
@@ -119,23 +136,35 @@ class BackgroundService : Service() {
         // Watch for changes on all network connections except cellular networks
         val networkRequestBuilder = createNonCellularNetworkRequestBuilder()
         val connectivityManager = this.getSystemService<ConnectivityManager>()
-        networkCallback = object : NetworkCallback() {
+        connectivityManager?.let { manager ->
+            networkCallback = object : NetworkCallback() {
+                // All callbacks run on a dedicated thread that isn't the main thread.
 
-            // All callbacks run on a dedicated thread that isn't the main thread
+                override fun onAvailable(network: Network) {
+                    Log.i(TAG, "Valid network available")
+                    isConnectedToNonCellularNetwork.postValue(true)
+                    onNetworkChange(network)
+                    scheduleWifiReconnectRetries(manager, network)
+                }
 
-            override fun onAvailable(network: Network) {
-                Log.i("BackgroundService", "Valid network available")
-                isConnectedToNonCellularNetwork.postValue(true)
-                onNetworkChange(network)
+                override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                    if (networkCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                        scheduleWifiReconnectRetries(manager, network)
+                    }
+                }
+
+                override fun onLost(network: Network) {
+                    Log.i(TAG, "Valid network lost")
+                    isConnectedToNonCellularNetwork.postValue(false)
+                    onNetworkChange(null)
+                    if (network == reconnectWifiNetwork) {
+                        reconnectWifiNetwork = null
+                        wifiReconnectRetryController.cancel()
+                    }
+                }
+            }.also { callback ->
+                manager.registerNetworkCallback(networkRequestBuilder.build(), callback)
             }
-
-            override fun onLost(network: Network) {
-                Log.i("BackgroundService", "Valid network lost")
-                isConnectedToNonCellularNetwork.postValue(false)
-                onNetworkChange(null)
-            }
-        }.also {
-            connectivityManager?.registerNetworkCallback(networkRequestBuilder.build(), it)
         }
 
         registerLinkProviders()
@@ -144,6 +173,15 @@ class BackgroundService : Service() {
             linkProvider.onStart()
         }
         initialized = true
+    }
+
+    private fun scheduleWifiReconnectRetries(connectivityManager: ConnectivityManager, network: Network) {
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return
+        if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || reconnectWifiNetwork == network) return
+
+        reconnectWifiNetwork = network
+        Log.i("BackgroundService", "Scheduling bounded Wi-Fi reconnect retries")
+        wifiReconnectRetryController.start()
     }
 
     fun changePersistentNotificationVisibility(visible: Boolean) {
@@ -238,6 +276,8 @@ class BackgroundService : Service() {
     override fun onDestroy() {
         Log.d("KdeConnect/BgService", "onDestroy")
         initialized = false
+        reconnectWifiNetwork = null
+        wifiReconnectRetryController.cancel()
         for (linkProvider in linkProviders) {
             linkProvider.onStop()
         }
