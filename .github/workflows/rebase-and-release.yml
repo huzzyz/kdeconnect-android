@@ -107,7 +107,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           set +e
-          git rebase --onto "${{ steps.tags.outputs.target }}" "${{ steps.tags.outputs.base }}" shizuku-clipboard
+          git rebase --onto "${{ steps.tags.outputs.target }}" "${{ steps.tags.outputs.base }}"
           RC=$?
           set -e
           if [ $RC -ne 0 ]; then
@@ -148,7 +148,7 @@ jobs:
             || { echo "::error::Shizuku dependency missing from build.gradle.kts"; exit 1; }
           grep -q 'org.kde.kdeconnect_tp.shizuku' build.gradle.kts \
             || { echo "::error::fork applicationId missing — would install over official KDE Connect"; exit 1; }
-          grep -q 'BuildConfig.APPLICATION_ID + ".fileprovider"' \
+          grep -Fq 'BuildConfig.APPLICATION_ID + ".fileprovider"' \
             src/main/java/org/kde/kdeconnect/plugins/share/CompositeReceiveFileJob.kt \
             || { echo "::error::file sharing provider does not use the fork applicationId"; exit 1; }
           echo "Patch intact."
@@ -252,11 +252,11 @@ jobs:
           if-no-files-found: error
 
       - name: Push the rebased branch
-        if: steps.tags.outputs.already == 'false' && inputs.dry_run != true
+        if: steps.tags.outputs.already == 'false' && inputs.dry_run != true && github.ref_name == 'shizuku-clipboard'
         run: git push --force-with-lease origin shizuku-clipboard
 
       - name: Publish release
-        if: steps.tags.outputs.already == 'false' && inputs.dry_run != true
+        if: steps.tags.outputs.already == 'false' && inputs.dry_run != true && github.ref_name == 'shizuku-clipboard'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
