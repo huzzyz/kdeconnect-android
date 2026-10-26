@@ -37,7 +37,7 @@ jobs:
       - name: Checkout fork (full history — rebase needs it)
         uses: actions/checkout@v7
         with:
-          ref: shizuku-clipboard
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
 
       - name: Add upstream and fetch tags
@@ -148,6 +148,9 @@ jobs:
             || { echo "::error::Shizuku dependency missing from build.gradle.kts"; exit 1; }
           grep -q 'org.kde.kdeconnect_tp.shizuku' build.gradle.kts \
             || { echo "::error::fork applicationId missing — would install over official KDE Connect"; exit 1; }
+          grep -q 'BuildConfig.APPLICATION_ID + ".fileprovider"' \
+            src/main/java/org/kde/kdeconnect/plugins/share/CompositeReceiveFileJob.kt \
+            || { echo "::error::file sharing provider does not use the fork applicationId"; exit 1; }
           echo "Patch intact."
 
       - name: Set up JDK 17
