@@ -162,7 +162,7 @@ class ClipboardListener {
                 synchronized(shizukuMonitorLock) {
                     if (generation != shizukuMonitorGeneration || !isShizukuAvailableAndAuthorized()) {
                         shizukuMonitorStarting = false
-                        return@execute
+                        return@runOnNewThread
                     }
                 }
                 val timeStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
@@ -177,7 +177,7 @@ class ClipboardListener {
                     if (generation != shizukuMonitorGeneration || !isShizukuAvailableAndAuthorized()) {
                         shizukuMonitorStarting = false
                         newProcess.destroy()
-                        return@execute
+                        return@runOnNewThread
                     }
                     shizukuMonitorStarting = false
                     shizukuLogcatProcess = newProcess
