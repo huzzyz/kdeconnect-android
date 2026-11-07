@@ -189,11 +189,56 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
+          repair_dir="$RUNNER_TEMP/objenesis-index-repair"
+          restore_objenesis() {
+            if [ -f "$repair_dir/manifest.tsv" ]; then
+              python3 - "$repair_dir/manifest.tsv" <<'PY'
+          from pathlib import Path
+          import shutil
+          import sys
+
+          manifest = Path(sys.argv[1])
+          for line in manifest.read_text().splitlines():
+              jar, backup = line.split("\t", 1)
+              shutil.copy2(backup, jar)
+              print(f"Restored original transformed cache JAR: {jar}")
+              Path(backup).unlink()
+          manifest.unlink()
+          manifest.parent.rmdir()
+          PY
+            fi
+          }
+          trap restore_objenesis EXIT
+
+          # A prior workflow run may have cached a repaired transform. Recreate
+          # only that altered workspace so Gradle starts from its pristine output.
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          import zipfile
+
+          caches = Path.home() / ".gradle/caches"
+          if caches.exists():
+              for jar in list(caches.rglob("objenesis-3.4.jar")):
+                  if "transformed" not in jar.parts:
+                      continue
+                  try:
+                      with zipfile.ZipFile(jar) as archive:
+                          has_index = "META-INF/INDEX.LIST" in archive.namelist()
+                  except (OSError, zipfile.BadZipFile):
+                      continue
+                  if not has_index:
+                      workspace = jar.parent.parent
+                      shutil.rmtree(workspace)
+                      print(f"Removed prior patched Gradle transform workspace: {workspace}")
+          PY
+
           if ! ./gradlew testDebugUnitTest --console=plain --stacktrace; then
             echo "Unit tests failed; checking Gradle's transformed Objenesis JAR for a stale JAR index."
             python3 - <<'PY'
           from pathlib import Path
           import os
+          import shutil
           import stat
           import tempfile
           import zipfile
@@ -230,6 +275,9 @@ jobs:
                           return True
               return False
 
+          repair_dir = Path(os.environ["RUNNER_TEMP"]) / "objenesis-index-repair"
+          repair_dir.mkdir(parents=True, exist_ok=True)
+          manifest = repair_dir / "manifest.tsv"
           repaired = 0
           for jar in candidates:
               try:
@@ -238,6 +286,10 @@ jobs:
                           continue
                       if not has_invalid_package_mapping(jar):
                           continue
+                      backup = repair_dir / f"original-{repaired}.jar"
+                      shutil.copy2(jar, backup)
+                      with manifest.open("a") as paths:
+                          paths.write(f"{jar}\t{backup}\n")
                       fd, temp_name = tempfile.mkstemp(prefix="objenesis-no-index-")
                       os.close(fd)
                       temp = Path(temp_name)
@@ -256,7 +308,13 @@ jobs:
               raise SystemExit("No indexed transformed objenesis-3.4.jar found; refusing to retry without the diagnosed repair.")
           print(f"Repaired {repaired} transformed Objenesis JAR(s); retrying the full unit-test task.")
           PY
-            ./gradlew testDebugUnitTest --console=plain --stacktrace
+            if ./gradlew testDebugUnitTest --console=plain --stacktrace; then
+              restore_objenesis
+            else
+              retry_status=$?
+              restore_objenesis
+              exit "$retry_status"
+            fi
           fi
           ./gradlew assembleRelease --console=plain \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
