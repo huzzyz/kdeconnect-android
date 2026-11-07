@@ -196,6 +196,29 @@ jobs:
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
 
+      - name: Trace Robolectric classloader after unit-test failure
+        if: failure() && steps.tags.outputs.already == 'false'
+        run: |
+          cat > "$RUNNER_TEMP/robolectric-trace.init.gradle" <<'EOF'
+          allprojects {
+            tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+              if (name == 'testDebugUnitTest') {
+                jvmArgs '-Dsun.misc.URLClassPath.debug=true'
+              }
+            }
+          }
+          EOF
+          set +e
+          ./gradlew --no-daemon --init-script "$RUNNER_TEMP/robolectric-trace.init.gradle" \
+            testDebugUnitTest \
+            --tests 'org.kde.kdeconnect.plugins.remotekeyboardime.RemoteKeyboardIMEPluginTest' \
+            --console=plain --stacktrace > "$RUNNER_TEMP/robolectric-classloader-trace.log" 2>&1
+          TRACE_RC=$?
+          set -e
+          echo "Focused trace exit code: $TRACE_RC"
+          rg -n -C 4 'InvalidJarIndexError|Opening .*\.jar|URLClassPath.getResource' \
+            "$RUNNER_TEMP/robolectric-classloader-trace.log" | tail -240 || true
+
       - name: Retain failed unit-test diagnostics
         if: failure() && steps.tags.outputs.already == 'false'
         uses: actions/upload-artifact@v7
@@ -204,6 +227,7 @@ jobs:
           path: |
             build/test-results/testDebugUnitTest/*.xml
             build/reports/tests/testDebugUnitTest/**
+            ${{ runner.temp }}/robolectric-classloader-trace.log
           retention-days: 14
           if-no-files-found: warn
 
