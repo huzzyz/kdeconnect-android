@@ -198,16 +198,45 @@ jobs:
           import tempfile
           import zipfile
 
+          test_results = Path("build/test-results/testDebugUnitTest")
+          reports = list(test_results.glob("*.xml")) if test_results.exists() else []
+          if not reports or not any(
+              b"InvalidJarIndexError" in report.read_bytes() for report in reports
+          ):
+              raise SystemExit("The test reports do not contain InvalidJarIndexError; refusing to retry unrelated failures.")
+
           caches = Path.home() / ".gradle/caches"
           candidates = [
               jar for jar in caches.rglob("objenesis-3.4.jar")
               if "transformed" in jar.parts
           ] if caches.exists() else []
+
+          def has_invalid_package_mapping(jar):
+              with zipfile.ZipFile(jar) as archive:
+                  lines = archive.read("META-INF/INDEX.LIST").decode("utf-8", "replace").splitlines()
+                  entries = archive.namelist()
+              current_target = None
+              for line in lines:
+                  line = line.strip()
+                  if not line:
+                      continue
+                  if line.endswith(".jar"):
+                      current_target = (jar.parent / line).resolve()
+                  elif current_target == jar.resolve():
+                      if not any(
+                          "/" in entry and entry.rsplit("/", 1)[0] == line
+                          for entry in entries
+                      ):
+                          return True
+              return False
+
           repaired = 0
           for jar in candidates:
               try:
                   with zipfile.ZipFile(jar) as source:
                       if "META-INF/INDEX.LIST" not in source.namelist():
+                          continue
+                      if not has_invalid_package_mapping(jar):
                           continue
                       fd, temp_name = tempfile.mkstemp(prefix="objenesis-no-index-")
                       os.close(fd)
