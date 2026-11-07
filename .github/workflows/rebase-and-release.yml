@@ -189,7 +189,46 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest --console=plain --stacktrace
+          if ! ./gradlew testDebugUnitTest --console=plain --stacktrace; then
+            echo "Unit tests failed; checking Gradle's transformed Objenesis JAR for a stale JAR index."
+            python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import stat
+          import tempfile
+          import zipfile
+
+          caches = Path.home() / ".gradle/caches"
+          candidates = [
+              jar for jar in caches.rglob("objenesis-3.4.jar")
+              if "transformed" in jar.parts
+          ] if caches.exists() else []
+          repaired = 0
+          for jar in candidates:
+              try:
+                  with zipfile.ZipFile(jar) as source:
+                      if "META-INF/INDEX.LIST" not in source.namelist():
+                          continue
+                      fd, temp_name = tempfile.mkstemp(prefix="objenesis-no-index-")
+                      os.close(fd)
+                      temp = Path(temp_name)
+                      with zipfile.ZipFile(temp, "w") as target:
+                          for entry in source.infolist():
+                              if entry.filename != "META-INF/INDEX.LIST":
+                                  target.writestr(entry, source.read(entry))
+                  os.chmod(temp, stat.S_IMODE(jar.stat().st_mode))
+                  os.replace(temp, jar)
+                  repaired += 1
+                  print(f"Removed stale META-INF/INDEX.LIST from transformed cache JAR: {jar}")
+              except (OSError, zipfile.BadZipFile) as error:
+                  raise SystemExit(f"Could not inspect/repair {jar}: {error}")
+
+          if repaired == 0:
+              raise SystemExit("No indexed transformed objenesis-3.4.jar found; refusing to retry without the diagnosed repair.")
+          print(f"Repaired {repaired} transformed Objenesis JAR(s); retrying the full unit-test task.")
+          PY
+            ./gradlew testDebugUnitTest --console=plain --stacktrace
+          fi
           ./gradlew assembleRelease --console=plain \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
