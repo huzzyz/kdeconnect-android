@@ -189,12 +189,23 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest --console=plain
+          ./gradlew testDebugUnitTest --console=plain --stacktrace
           ./gradlew assembleRelease --console=plain \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      - name: Retain failed unit-test diagnostics
+        if: failure() && steps.tags.outputs.already == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-diagnostics-${{ github.run_id }}
+          path: |
+            build/test-results/testDebugUnitTest/*.xml
+            build/reports/tests/testDebugUnitTest/**
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Name the artifact predictably
         if: steps.tags.outputs.already == 'false'
