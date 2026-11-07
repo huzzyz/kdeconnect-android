@@ -196,28 +196,64 @@ jobs:
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
 
-      - name: Trace Robolectric classloader after unit-test failure
+      - name: Scan JAR indexes after unit-test failure
         if: failure() && steps.tags.outputs.already == 'false'
         run: |
-          cat > "$RUNNER_TEMP/robolectric-trace.init.gradle" <<'EOF'
-          allprojects {
-            tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
-              if (name == 'testDebugUnitTest') {
-                jvmArgs '-Dsun.misc.URLClassPath.debug=true'
-              }
-            }
-          }
-          EOF
-          set +e
-          ./gradlew --no-daemon --init-script "$RUNNER_TEMP/robolectric-trace.init.gradle" \
-            testDebugUnitTest \
-            --tests 'org.kde.kdeconnect.plugins.remotekeyboardime.RemoteKeyboardIMEPluginTest' \
-            --console=plain --stacktrace > "$RUNNER_TEMP/robolectric-classloader-trace.log" 2>&1
-          TRACE_RC=$?
-          set -e
-          echo "Focused trace exit code: $TRACE_RC"
-          rg -n -C 4 'InvalidJarIndexError|Opening .*\.jar|URLClassPath.getResource' \
-            "$RUNNER_TEMP/robolectric-classloader-trace.log" | tail -240 || true
+          python3 - <<'PY' | tee "$RUNNER_TEMP/jar-index-scan.txt"
+          from pathlib import Path
+          import os
+          import zipfile
+
+          roots = [Path.home() / ".gradle", Path.home() / ".m2", Path(os.environ["ANDROID_HOME"])]
+          archives = []
+          for root in roots:
+              if root.exists():
+                  archives.extend(root.rglob("*.jar"))
+
+          jar_cache = {}
+          def package_dirs(jar):
+              key = jar.resolve()
+              if key not in jar_cache:
+                  try:
+                      with zipfile.ZipFile(key) as zf:
+                          jar_cache[key] = {n.rpartition("/")[0] for n in zf.namelist() if "/" in n}
+                  except (OSError, zipfile.BadZipFile):
+                      jar_cache[key] = set()
+              return jar_cache[key]
+
+          indexed = 0
+          invalid = []
+          for archive in archives:
+              try:
+                  with zipfile.ZipFile(archive) as zf:
+                      try:
+                          lines = zf.read("META-INF/INDEX.LIST").decode("utf-8", "replace").splitlines()
+                      except KeyError:
+                          continue
+              except (OSError, zipfile.BadZipFile):
+                  continue
+
+              indexed += 1
+              target = None
+              for line in lines:
+                  line = line.strip()
+                  if not line:
+                      continue
+                  if line.endswith(".jar"):
+                      target = (archive.parent / line).resolve()
+                      if not target.is_file():
+                          invalid.append((archive, line, "<missing target JAR>"))
+                      continue
+                  if target and target.is_file() and line not in package_dirs(target):
+                      invalid.append((archive, line, str(target)))
+
+          print(f"Scanned {len(archives)} JARs; {indexed} contain META-INF/INDEX.LIST")
+          if invalid:
+              for index_jar, package, target_jar in invalid:
+                  print(f"INVALID: index={index_jar} package={package} target={target_jar}")
+          else:
+              print("No invalid or missing package mappings found.")
+          PY
 
       - name: Retain failed unit-test diagnostics
         if: failure() && steps.tags.outputs.already == 'false'
@@ -227,7 +263,7 @@ jobs:
           path: |
             build/test-results/testDebugUnitTest/*.xml
             build/reports/tests/testDebugUnitTest/**
-            ${{ runner.temp }}/robolectric-classloader-trace.log
+            ${{ runner.temp }}/jar-index-scan.txt
           retention-days: 14
           if-no-files-found: warn
 
