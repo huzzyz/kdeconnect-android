@@ -233,7 +233,7 @@ jobs:
                       print(f"Removed prior patched Gradle transform workspace: {workspace}")
           PY
 
-          if ! ./gradlew testDebugUnitTest --console=plain --stacktrace; then
+          if ! ./gradlew testDebugUnitTest --rerun-tasks --console=plain --stacktrace; then
             echo "Unit tests failed; checking Gradle's transformed Objenesis JAR for a stale JAR index."
             python3 - <<'PY'
           from pathlib import Path
@@ -308,7 +308,7 @@ jobs:
               raise SystemExit("No indexed transformed objenesis-3.4.jar found; refusing to retry without the diagnosed repair.")
           print(f"Repaired {repaired} transformed Objenesis JAR(s); retrying the full unit-test task.")
           PY
-            if ./gradlew testDebugUnitTest --console=plain --stacktrace; then
+            if ./gradlew testDebugUnitTest --rerun-tasks --console=plain --stacktrace; then
               restore_objenesis
             else
               retry_status=$?
